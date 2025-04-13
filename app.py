@@ -3,10 +3,10 @@ import pdfplumber
 import pandas as pd
 import re
 from io import BytesIO
-from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
 
-LABEL_SIZE = (4 * inch, 6 * inch)  # 4x6 inches portrait
+LABEL_SIZE = (4 * inch, 6 * inch)
 
 # ==================== DATA EXTRACTION ====================
 def extract_orders_from_pdfs(pdf_files):
@@ -40,12 +40,19 @@ def extract_orders_from_pdfs(pdf_files):
             sku_match = re.search(r"SKU:\s*(.+?)\n", raw)
             base['SKU'] = sku_match.group(1).strip() if sku_match else ""
 
+            fnsku_match = re.search(r"FNSKU:\s*([A-Z0-9]+)", raw)
+            base['FNSKU'] = fnsku_match.group(1).strip() if fnsku_match else ""
+
+            title_match = re.search(r"Product Details\s*(.*?)\s*SKU:", raw, re.DOTALL)
+            base['Product Title'] = title_match.group(1).strip().replace('\n', ' ') if title_match else ""
+
             qty_match = re.search(r"Quantity\s*(\d+)", raw)
             base['Qty'] = qty_match.group(1) if qty_match else "1"
 
             gift_note_match = re.search(r"Gift (Message|Note):\s*(.+?)(?:\n|$)", raw, re.IGNORECASE)
             gift_note = gift_note_match.group(2).strip() if gift_note_match else ""
 
+            # Towel
             if re.search(r"towel|washcloth|hand towel|bath towel", raw, re.IGNORECASE):
                 towel = base.copy()
 
@@ -73,6 +80,7 @@ def extract_orders_from_pdfs(pdf_files):
                 towel['Gift Note'] = gift_note
                 towel_orders.append(towel)
 
+            # Blanket
             elif re.search(r"blanket|swaddle|beanie|knit hat", raw, re.IGNORECASE):
                 blanket = base.copy()
 
@@ -103,62 +111,69 @@ def extract_orders_from_pdfs(pdf_files):
 
     return pd.DataFrame(towel_orders), pd.DataFrame(blanket_orders)
 
-# ==================== LABEL GENERATOR ====================
+# ==================== LABEL BUILDER ====================
 def create_4x6_labels_pdf(towel_df, blanket_df):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=LABEL_SIZE)
     c.setTitle("Amazon Order Labels")
 
-    def draw_text(label, value, size=12, bold=False, gap=15):
+    def draw_text(label, value, size=12, bold=False, gap=16):
         if value:
             c.setFont("Helvetica-Bold" if bold else "Helvetica", size)
             c.drawString(40, draw_text.y, f"{label}: {value}")
             draw_text.y -= gap
 
-    for row in towel_df.to_dict(orient='records'):
+    # Towel Labels
+    for row in towel_df.to_dict(orient="records"):
         draw_text.y = 560
-        c.setFont("Helvetica-Bold", 18)
+        c.setFont("Helvetica-Bold", 16)
         c.drawString(40, draw_text.y, "🧺 TOWEL ORDER")
         draw_text.y -= 30
 
-        draw_text("Buyer", row['Buyer Name'], 11)
-        draw_text("", row['Address'], 10)
-        draw_text("Order ID", row['Order ID'])
-        draw_text("Qty", row['Qty'], gap=12)
-        draw_text("Set", row['Set Type'], gap=12)
-        draw_text("SKU", row['SKU'], size=10, gap=12)
+        draw_text("Buyer", row["Buyer Name"], 11)
+        draw_text("Address", row["Address"], 10)
+        draw_text("Order ID", row["Order ID"])
+        draw_text("Product", row.get("Product Title", ""), size=10)
+        draw_text("FNSKU", row.get("FNSKU", ""), size=10)
+        draw_text("SKU", row.get("SKU", ""), size=10)
 
-        draw_text("Font", row['Font'], bold=True)
-        draw_text("Font Color", row['Font Color'], bold=True)
+        draw_text("Qty", row["Qty"], gap=12)
+        draw_text("Set Type", row.get("Set Type", ""), gap=12)
+        draw_text("Font", row.get("Font", ""), bold=True)
+        draw_text("Font Color", row.get("Font Color", ""), bold=True)
 
-        draw_text("Washcloth", row.get('Washcloth Text', ''), bold=True)
-        draw_text("Hand Towel", row.get('Hand Towel Text', ''), bold=True)
-        draw_text("Bath Towel", row.get('Bath Towel Text', ''), bold=True)
+        draw_text("Washcloth", row.get("Washcloth Text", ""), bold=True)
+        draw_text("Hand Towel", row.get("Hand Towel Text", ""), bold=True)
+        draw_text("Bath Towel", row.get("Bath Towel Text", ""), bold=True)
 
-        if row.get('Gift Note'):
+        if row.get("Gift Note"):
             draw_text("Gift Note", f'"{row["Gift Note"]}"', size=10, gap=18)
 
         c.showPage()
 
-    for row in blanket_df.to_dict(orient='records'):
+    # Blanket Labels
+    for row in blanket_df.to_dict(orient="records"):
         draw_text.y = 560
-        c.setFont("Helvetica-Bold", 18)
+        c.setFont("Helvetica-Bold", 16)
         c.drawString(40, draw_text.y, "🍼 BLANKET ORDER")
         draw_text.y -= 30
 
-        draw_text("Buyer", row['Buyer Name'], 11)
-        draw_text("", row['Address'], 10)
-        draw_text("Order ID", row['Order ID'])
-        draw_text("Qty", row['Qty'], gap=12)
-        draw_text("SKU", row['SKU'], size=10, gap=12)
+        draw_text("Buyer", row["Buyer Name"], 11)
+        draw_text("Address", row["Address"], 10)
+        draw_text("Order ID", row["Order ID"])
+        draw_text("Product", row.get("Product Title", ""), size=10)
+        draw_text("FNSKU", row.get("FNSKU", ""), size=10)
+        draw_text("SKU", row.get("SKU", ""), size=10)
 
+        draw_text("Qty", row["Qty"], gap=12)
         draw_text("Blanket Color", row.get("Blanket Color", ""), bold=True)
         draw_text("Font", row.get("Font", ""), bold=True)
-        draw_text("Thread", row.get("Thread Color", ""), bold=True)
+        draw_text("Thread Color", row.get("Thread Color", ""), bold=True)
         draw_text("Name", row.get("Name", ""), bold=True)
 
         draw_text("Knit Hat", row.get("Knit Hat?"))
         draw_text("Gift Box", row.get("Gift Box?"))
+
         if row.get("Gift Note"):
             draw_text("Gift Note", f'"{row["Gift Note"]}"', size=10, gap=18)
 
@@ -169,8 +184,8 @@ def create_4x6_labels_pdf(towel_df, blanket_df):
     return buffer
 
 # ==================== STREAMLIT APP ====================
-st.set_page_config(page_title="Amazon Orders Split", layout="wide")
-st.title("📦 Amazon Custom Orders — Towels & Blankets")
+st.set_page_config(page_title="Amazon Orders to Labels", layout="wide")
+st.title("📦 Amazon Production Orders — Towels & Blankets")
 
 uploaded_files = st.file_uploader("Upload one or more Amazon Order PDFs", type="pdf", accept_multiple_files=True)
 
@@ -185,7 +200,7 @@ if uploaded_files:
         st.subheader("🍼 Blanket Orders")
         st.dataframe(blankets_df, use_container_width=True)
 
-    # Excel Export
+    # Excel download
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         if not towels_df.empty:
@@ -194,12 +209,12 @@ if uploaded_files:
             blankets_df.to_excel(writer, sheet_name='Blankets', index=False)
     excel_buffer.seek(0)
 
-    st.download_button("📥 Download Excel (2 Sheets)", excel_buffer, file_name="Amazon_Orders.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("📥 Download Excel (2 Sheets)", data=excel_buffer, file_name="Amazon_Orders.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     # Label PDF
     if st.button("📄 Generate 4x6 Order Labels PDF"):
         label_pdf = create_4x6_labels_pdf(towels_df, blankets_df)
-        st.download_button("📥 Download Printable 4x6 Labels", data=label_pdf, file_name="Amazon_Order_Labels_4x6.pdf", mime="application/pdf")
+        st.download_button("📥 Download Printable Labels PDF", data=label_pdf, file_name="Amazon_Labels_4x6.pdf", mime="application/pdf")
 
     if st.button("🔄 Clear All"):
         st.experimental_rerun()
