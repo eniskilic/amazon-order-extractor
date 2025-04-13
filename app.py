@@ -26,11 +26,12 @@ def extract_orders_from_pdfs(pdf_files):
 
             # Smart Buyer Name Extraction
             buyer_match = re.search(r"Buyer Name:\s*(.+)", raw)
-            if buyer_match:
-                base['Buyer Name'] = buyer_match.group(1).strip()
-            else:
-                fallback = re.search(r"Shipping Address:\s*(.*?)\n", raw)
-                base['Buyer Name'] = fallback.group(1).strip() if fallback else "Unknown"
+if buyer_match:
+    base['Buyer Name'] = buyer_match.group(1).strip()
+else:
+    addr_lines = raw.strip().splitlines()
+    base['Buyer Name'] = addr_lines[0].strip() if addr_lines else "Unknown"
+
 
             addr_match = re.search(r"([\w\s\.'\-]+)\n(.+?)\n(.+?\d{5}.*?)\n", raw)
             if addr_match:
