@@ -1,335 +1,220 @@
 import streamlit as st
-import PyPDF2
-import re
+import pdfplumber
 import pandas as pd
-from fpdf import FPDF
-import io
-import base64
-from datetime import datetime
+import re
+from io import BytesIO
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
 
-# Constants
-LABEL_WIDTH = 4 * 25.4  # 4 inches in mm
-LABEL_HEIGHT = 6 * 25.4  # 6 inches in mm
-FONT_SIZE = 10
-LINE_HEIGHT = 5
+LABEL_SIZE = (4 * inch, 6 * inch)
 
+# ==================== DATA EXTRACTION ====================
 def extract_orders_from_pdfs(pdf_files):
-    """
-    Extract order information from Amazon PDF exports using regex patterns.
-    Returns a dictionary with towel and blanket orders.
-    """
-    orders = {'towels': [], 'blankets': []}
-    
-    # Improved regex patterns based on the sample files
-    order_id_pattern = r'Order ID:\s*(\d+-\d+-\d+)'
-    buyer_pattern = r'Ship to:\s*(.+?)\n|# (.+?)\n'
-    address_pattern = r'Ship to:.+?\n(.+?)\n\n|# .+?\n(.+?)\n'
-    product_pattern = r'(\d+)\s*of\s*(.+?)\n(.+?)\n(.+?)\n|Quantity\s*Product Details\s*Unit price\s*Order Totals\s*\d+\s*(.+?)\n(.+?)\n(.+?)\n'
-    customization_pattern = r'Customizations?:?\s*(.+?)(?:\n\n|\nShipping Address|\nReturning your|$)'
-    gift_note_pattern = r'Gift [mM]essage:\s*(.+?)(?:\n\n|\nShipping Address|\nReturning your|$)'
-    
+    towel_orders = []
+    blanket_orders = []
+
     for pdf_file in pdf_files:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        
-        for page in pdf_reader.pages:
-            text = page.extract_text()
-            
-            # Extract basic order info
-            order_id_match = re.search(order_id_pattern, text)
-            buyer_match = re.search(buyer_pattern, text)
-            address_match = re.search(address_pattern, text, re.DOTALL)
-            
-            if not (order_id_match and buyer_match and address_match):
-                continue
-                
-            order_id = order_id_match.group(1)
-            buyer = buyer_match.group(1) or buyer_match.group(2)
-            buyer = buyer.strip()
-            
-            # Clean up address
-            address = address_match.group(1) or address_match.group(2)
-            address = address.strip().replace('\n', ', ')
-            
-            # Extract product details - improved to handle different formats
-            product_matches = re.finditer(product_pattern, text, re.DOTALL)
-            
-            for match in product_matches:
-                if match.group(1):  # First pattern matched
-                    quantity = match.group(1)
-                    product_title = match.group(2).strip()
-                    sku = match.group(3).strip()
-                    fnsku = match.group(4).strip()
-                else:  # Second pattern matched
-                    quantity = "1"
-                    product_title = match.group(5).strip()
-                    sku = match.group(6).strip()
-                    fnsku = match.group(7).strip() if match.group(7) else ""
-                
-                # Extract customization
-                customization_match = re.search(customization_pattern, text[match.end():], re.DOTALL)
-                customization = customization_match.group(1).strip() if customization_match else ""
-                
-                # Extract gift note
-                gift_note_match = re.search(gift_note_pattern, text, re.DOTALL)
-                gift_note = gift_note_match.group(1).strip() if gift_note_match else ""
-                
-                # Parse customization details based on product type
-                if 'towel' in product_title.lower() or 'washcloth' in product_title.lower():
-                    # Parse towel customization
-                    towel_details = parse_towel_customization(customization)
-                    order_data = {
-                        'order_id': order_id,
-                        'buyer': buyer,
-                        'address': address,
-                        'product_title': product_title,
-                        'sku': sku,
-                        'fnsku': fnsku,
-                        'quantity': quantity,
-                        **towel_details,
-                        'gift_note': gift_note
-                    }
-                    orders['towels'].append(order_data)
-                elif 'blanket' in product_title.lower():
-                    # Parse blanket customization
-                    blanket_details = parse_blanket_customization(customization)
-                    order_data = {
-                        'order_id': order_id,
-                        'buyer': buyer,
-                        'address': address,
-                        'product_title': product_title,
-                        'sku': sku,
-                        'fnsku': fnsku,
-                        'quantity': quantity,
-                        **blanket_details,
-                        'gift_note': gift_note
-                    }
-                    orders['blankets'].append(order_data)
-    
-    return orders
+        with pdfplumber.open(pdf_file) as pdf:
+            text = ''
+            for page in pdf.pages:
+                text += page.extract_text() + "\n"
 
-def parse_towel_customization(customization_text):
-    """Parse towel customization details from text"""
-    details = {
-        'font': '',
-        'font_color': '',
-        'washcloth_text': '',
-        'hand_text': '',
-        'bath_text': ''
-    }
-    
-    if not customization_text:
-        return details
-    
-    # Improved parsing for towel customizations
-    font_match = re.search(r'(?:Font|Choose Your Font):\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if font_match:
-        details['font'] = font_match.group(1).strip()
-    
-    color_match = re.search(r'(?:Font Color|Thread Color):\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if color_match:
-        details['font_color'] = color_match.group(1).strip()
-    
-    wash_match = re.search(r'(?:Washcloth|First Washcloth):\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if wash_match:
-        details['washcloth_text'] = wash_match.group(1).strip()
-    
-    hand_match = re.search(r'(?:Hand Towel|First Hand Towel):\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if hand_match:
-        details['hand_text'] = hand_match.group(1).strip()
-    
-    bath_match = re.search(r'(?:Bath Towel|First Bath Towel):\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if bath_match:
-        details['bath_text'] = bath_match.group(1).strip()
-    
-    return details
+        raw_orders = text.split("Shipping Address:")[1:]
 
-def parse_blanket_customization(customization_text):
-    """Parse blanket customization details from text"""
-    details = {
-        'font': '',
-        'thread_color': '',
-        'name': '',
-        'blanket_color': '',
-        'gift_box': False,
-        'knit_hat': False
-    }
-    
-    if not customization_text:
-        return details
-    
-    # Improved parsing for blanket customizations
-    color_match = re.search(r'Blanket Color:\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if color_match:
-        details['blanket_color'] = color_match.group(1).strip()
-    
-    font_match = re.search(r'Embroidery Font:\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if font_match:
-        details['font'] = font_match.group(1).strip()
-    
-    thread_match = re.search(r'Thread Color:\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if thread_match:
-        details['thread_color'] = thread_match.group(1).strip()
-    
-    name_match = re.search(r'Name:\s*(.+?)(?:;|\n|$)', customization_text, re.IGNORECASE)
-    if name_match:
-        details['name'] = name_match.group(1).strip()
-    
-    hat_match = re.search(r'Add Customized Knit Hat:\s*(Yes Please|No Thank You)', customization_text, re.IGNORECASE)
-    if hat_match:
-        details['knit_hat'] = hat_match.group(1).strip().lower() == 'yes please'
-    
-    box_match = re.search(r'Gift Box & Message:\s*(Yes Please!|No, Thank you)', customization_text, re.IGNORECASE)
-    if box_match:
-        details['gift_box'] = box_match.group(1).strip().lower() == 'yes please!'
-    
-    return details
+        for raw in raw_orders:
+            base = {}
+            addr_match = re.search(r"([\w\s\.'\-]+)\n(.+?)\n(.+?\d{5}.*?)\n", raw)
+            if addr_match:
+                base['Buyer Name'] = addr_match.group(1).strip()
+                base['Address'] = f"{addr_match.group(2).strip()}, {addr_match.group(3).strip()}"
 
-def create_4x6_labels(orders):
-    """Generate printable 4x6 PDF labels for the orders"""
-    pdf = FPDF(orientation='P', unit='mm', format=(LABEL_WIDTH, LABEL_HEIGHT))
-    pdf.set_margins(5, 5, 5)  # Small margins
-    pdf.set_auto_page_break(False)
-    
-    # Group items by order ID
-    combined_orders = {}
-    for order_type in orders:
-        for order in orders[order_type]:
-            order_id = order['order_id']
-            if order_id not in combined_orders:
-                combined_orders[order_id] = {
-                    'buyer': order['buyer'],
-                    'address': order['address'],
-                    'items': [],
-                    'gift_note': order.get('gift_note', '')
-                }
-            combined_orders[order_id]['items'].append(order)
-    
-    # Create a label for each order
-    for order_id, order_data in combined_orders.items():
-        pdf.add_page()
-        pdf.set_font('Arial', 'B', FONT_SIZE)
-        pdf.cell(0, LINE_HEIGHT, f"Order ID: {order_id}", ln=1)
-        pdf.set_font('Arial', '', FONT_SIZE)
-        pdf.cell(0, LINE_HEIGHT, f"Buyer: {order_data['buyer']}", ln=1)
-        
-        # Handle address with proper line breaks
-        address_lines = order_data['address'].split(', ')
-        for line in address_lines:
-            pdf.cell(0, LINE_HEIGHT, line, ln=1)
-        
-        pdf.ln(2)
-        
-        # Add items
-        for item in order_data['items']:
-            pdf.set_font('Arial', 'B', FONT_SIZE)
-            pdf.cell(0, LINE_HEIGHT, f"Product: {item['product_title']}", ln=1)
-            pdf.set_font('Arial', '', FONT_SIZE)
-            pdf.cell(0, LINE_HEIGHT, f"SKU: {item['sku']}", ln=1)
-            pdf.cell(0, LINE_HEIGHT, f"FNSKU: {item.get('fnsku', '')}", ln=1)
-            pdf.cell(0, LINE_HEIGHT, f"Qty: {item['quantity']}", ln=1)
-            
-            # Add customization details based on product type
-            if 'towel' in item['product_title'].lower():
-                pdf.cell(0, LINE_HEIGHT, f"Font: {item.get('font', '')}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Font Color: {item.get('font_color', '')}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Washcloth: {item.get('washcloth_text', '')}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Hand Towel: {item.get('hand_text', '')}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Bath Towel: {item.get('bath_text', '')}", ln=1)
-            elif 'blanket' in item['product_title'].lower():
-                pdf.cell(0, LINE_HEIGHT, f"Blanket Color: {item.get('blanket_color', '')}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Font: {item.get('font', '')}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Thread Color: {item.get('thread_color', '')}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Name: {item.get('name', '')}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Knit Hat: {'Yes' if item.get('knit_hat', False) else 'No'}", ln=1)
-                pdf.cell(0, LINE_HEIGHT, f"Gift Box: {'Yes' if item.get('gift_box', False) else 'No'}", ln=1)
-            
-            pdf.ln(2)
-        
-        # Add gift note if present
-        if order_data['gift_note']:
-            pdf.set_font('Arial', 'B', FONT_SIZE)
-            pdf.cell(0, LINE_HEIGHT, "Gift Note:", ln=1)
-            pdf.set_font('Arial', '', FONT_SIZE)
-            
-            # Handle long gift notes with text wrapping
-            gift_note = order_data['gift_note']
-            max_width = LABEL_WIDTH - 10  # Account for margins
-            max_chars_per_line = int(max_width / (FONT_SIZE * 0.5))  # Approximate chars per line
-            
-            for i in range(0, len(gift_note), max_chars_per_line):
-                pdf.cell(0, LINE_HEIGHT, gift_note[i:i+max_chars_per_line], ln=1)
-    
-    return pdf
+            date_match = re.search(r"Order Date:\s*(\w{3},\s\w{3}\s\d{1,2},\s\d{4})", raw)
+            base['Order Date'] = date_match.group(1) if date_match else ""
 
-def get_table_download_link(df, filename, link_text):
-    """Generates a link to download the dataframe as a CSV or Excel file"""
-    output = io.BytesIO()
-    
-    if filename.endswith('.csv'):
-        df.to_csv(output, index=False)
-        mime = 'text/csv'
-    else:
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False)
-        mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    
-    b64 = base64.b64encode(output.getvalue()).decode()
-    href = f'<a href="data:{mime};base64,{b64}" download="{filename}">{link_text}</a>'
-    return href
+            order_id_match = re.search(r"Order ID:\s*(\d{3}-\d{7}-\d{7})", raw)
+            base['Order ID'] = order_id_match.group(1) if order_id_match else ""
 
-def main():
-    st.title("Custom Embroidery Order Processor")
-    st.write("Upload Amazon order PDFs to extract order details and generate labels")
-    
-    # File upload
-    uploaded_files = st.file_uploader("Upload Amazon Order PDFs", type="pdf", accept_multiple_files=True)
-    
-    if uploaded_files:
-        # Process files
-        orders = extract_orders_from_pdfs(uploaded_files)
-        
-        # Create dataframes
-        df_towels = pd.DataFrame(orders['towels'])
-        df_blankets = pd.DataFrame(orders['blankets'])
-        
-        # Display download buttons at the top
-        st.markdown("### Download Order Data")
-        col1, col2 = st.columns(2)
-        with col1:
-            if not df_towels.empty:
-                st.markdown(get_table_download_link(df_towels, 'towel_orders.csv', 'Download Towel Orders (CSV)'), unsafe_allow_html=True)
-                st.markdown(get_table_download_link(df_towels, 'towel_orders.xlsx', 'Download Towel Orders (Excel)'), unsafe_allow_html=True)
-        with col2:
-            if not df_blankets.empty:
-                st.markdown(get_table_download_link(df_blankets, 'blanket_orders.csv', 'Download Blanket Orders (CSV)'), unsafe_allow_html=True)
-                st.markdown(get_table_download_link(df_blankets, 'blanket_orders.xlsx', 'Download Blanket Orders (Excel)'), unsafe_allow_html=True)
-        
-        # Generate labels
-        if st.button("Generate 4x6 Labels"):
-            labels_pdf = create_4x6_labels(orders)
-            
-            # Save the PDF to a bytes buffer
-            pdf_bytes = io.BytesIO()
-            labels_pdf.output(pdf_bytes)
-            pdf_bytes.seek(0)
-            
-            # Create download link
-            b64 = base64.b64encode(pdf_bytes.read()).decode()
-            href = f'<a href="data:application/pdf;base64,{b64}" download="embroidery_labels.pdf">Download Labels PDF</a>'
-            st.markdown(href, unsafe_allow_html=True)
-        
-        # Display preview tables
-        st.markdown("### Towel Orders Preview")
-        if not df_towels.empty:
-            st.dataframe(df_towels)
-        else:
-            st.write("No towel orders found")
-        
-        st.markdown("### Blanket Orders Preview")
-        if not df_blankets.empty:
-            st.dataframe(df_blankets)
-        else:
-            st.write("No blanket orders found")
+            item_id_match = re.search(r"Order Item ID:\s*(\d+)", raw)
+            base['Order Item ID'] = item_id_match.group(1) if item_id_match else ""
 
-if __name__ == "__main__":
-    main()
+            sku_match = re.search(r"SKU:\s*(.+?)\n", raw)
+            base['SKU'] = sku_match.group(1).strip() if sku_match else ""
+
+            fnsku_match = re.search(r"FNSKU:\s*([A-Z0-9]+)", raw)
+            base['FNSKU'] = fnsku_match.group(1).strip() if fnsku_match else ""
+
+            title_match = re.search(r"Product Details\s*(.*?)\s*SKU:", raw, re.DOTALL)
+            base['Product Title'] = title_match.group(1).strip().replace('\n', ' ') if title_match else ""
+
+            qty_match = re.search(r"Quantity\s*(\d+)", raw)
+            base['Qty'] = qty_match.group(1) if qty_match else "1"
+
+            gift_note_match = re.search(r"Gift (Message|Note):\s*(.+?)(?:\n|$)", raw, re.IGNORECASE)
+            gift_note = gift_note_match.group(2).strip() if gift_note_match else ""
+
+            # Towel
+            if re.search(r"towel|washcloth|hand towel|bath towel", raw, re.IGNORECASE):
+                towel = base.copy()
+
+                if "2Pcs" in raw:
+                    towel['Set Type'] = "2pc"
+                elif "3Pcs" in raw:
+                    towel['Set Type'] = "3pc"
+                elif "6Pcs" in raw:
+                    towel['Set Type'] = "6pc"
+                elif "Hand Towel" in raw:
+                    towel['Set Type'] = "Hand"
+                else:
+                    towel['Set Type'] = ""
+
+                font_match = re.search(r"Choose Your Font:\s*([^\n]+)", raw)
+                towel['Font'] = font_match.group(1).strip() if font_match else ""
+
+                color_match = re.search(r"Font Color:\s*([^\(#\n]+)", raw)
+                towel['Font Color'] = color_match.group(1).strip() if color_match else ""
+
+                for t in ['Washcloth', 'Hand Towel', 'Bath Towel']:
+                    match = re.search(rf"{t}:\s*(.+)", raw)
+                    towel[f'{t} Text'] = match.group(1).strip() if match else ""
+
+                towel['Gift Note'] = gift_note
+                towel_orders.append(towel)
+
+            # Blanket
+            elif re.search(r"blanket|swaddle|beanie|knit hat", raw, re.IGNORECASE):
+                blanket = base.copy()
+
+                color_match = re.search(r"Blanket Color:\s*([^\n]+)", raw)
+                blanket['Blanket Color'] = color_match.group(1).strip() if color_match else ""
+
+                font_match = re.search(r"Font:\s*([^\n]+)", raw)
+                blanket['Font'] = font_match.group(1).strip() if font_match else ""
+
+                thread_match = re.search(r"Thread Color:\s*([^\n]+)", raw)
+                blanket['Thread Color'] = thread_match.group(1).strip() if thread_match else ""
+
+                name_match = re.search(r"Blanket Text:\s*([^\n]+)", raw)
+                blanket['Name'] = name_match.group(1).strip() if name_match else ""
+
+                hat_match = re.search(r"Knit Hat:\s*(Yes|No)", raw, re.IGNORECASE)
+                blanket['Knit Hat?'] = hat_match.group(1).strip().capitalize() if hat_match else "No"
+
+                giftbox_match = re.search(r"Gift Box:\s*(Yes|No)", raw, re.IGNORECASE)
+                gift_box_value = "Yes" if gift_note else (
+                    giftbox_match.group(1).strip().capitalize() if giftbox_match else "No"
+                )
+
+                blanket['Gift Box?'] = gift_box_value
+                blanket['Gift Note'] = gift_note
+
+                blanket_orders.append(blanket)
+
+    return pd.DataFrame(towel_orders), pd.DataFrame(blanket_orders)
+
+# ==================== LABEL BUILDER ====================
+def create_4x6_labels_pdf(towel_df, blanket_df):
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=LABEL_SIZE)
+    c.setTitle("Amazon Order Labels")
+
+    def draw_text(label, value, size=12, bold=False, gap=16):
+        if value:
+            c.setFont("Helvetica-Bold" if bold else "Helvetica", size)
+            c.drawString(40, draw_text.y, f"{label}: {value}")
+            draw_text.y -= gap
+
+    # Towel Labels
+    for row in towel_df.to_dict(orient="records"):
+        draw_text.y = 560
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(40, draw_text.y, "🧺 TOWEL ORDER")
+        draw_text.y -= 30
+
+        draw_text("Buyer", row["Buyer Name"], 11)
+        draw_text("Address", row["Address"], 10)
+        draw_text("Order ID", row["Order ID"])
+        draw_text("Product", row.get("Product Title", ""), size=10)
+        draw_text("FNSKU", row.get("FNSKU", ""), size=10)
+        draw_text("SKU", row.get("SKU", ""), size=10)
+
+        draw_text("Qty", row["Qty"], gap=12)
+        draw_text("Set Type", row.get("Set Type", ""), gap=12)
+        draw_text("Font", row.get("Font", ""), bold=True)
+        draw_text("Font Color", row.get("Font Color", ""), bold=True)
+
+        draw_text("Washcloth", row.get("Washcloth Text", ""), bold=True)
+        draw_text("Hand Towel", row.get("Hand Towel Text", ""), bold=True)
+        draw_text("Bath Towel", row.get("Bath Towel Text", ""), bold=True)
+
+        if row.get("Gift Note"):
+            draw_text("Gift Note", f'"{row["Gift Note"]}"', size=10, gap=18)
+
+        c.showPage()
+
+    # Blanket Labels
+    for row in blanket_df.to_dict(orient="records"):
+        draw_text.y = 560
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(40, draw_text.y, "🍼 BLANKET ORDER")
+        draw_text.y -= 30
+
+        draw_text("Buyer", row["Buyer Name"], 11)
+        draw_text("Address", row["Address"], 10)
+        draw_text("Order ID", row["Order ID"])
+        draw_text("Product", row.get("Product Title", ""), size=10)
+        draw_text("FNSKU", row.get("FNSKU", ""), size=10)
+        draw_text("SKU", row.get("SKU", ""), size=10)
+
+        draw_text("Qty", row["Qty"], gap=12)
+        draw_text("Blanket Color", row.get("Blanket Color", ""), bold=True)
+        draw_text("Font", row.get("Font", ""), bold=True)
+        draw_text("Thread Color", row.get("Thread Color", ""), bold=True)
+        draw_text("Name", row.get("Name", ""), bold=True)
+
+        draw_text("Knit Hat", row.get("Knit Hat?"))
+        draw_text("Gift Box", row.get("Gift Box?"))
+
+        if row.get("Gift Note"):
+            draw_text("Gift Note", f'"{row["Gift Note"]}"', size=10, gap=18)
+
+        c.showPage()
+
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+# ==================== STREAMLIT APP ====================
+st.set_page_config(page_title="Amazon Orders to Labels", layout="wide")
+st.title("📦 Amazon Production Orders — Towels & Blankets")
+
+uploaded_files = st.file_uploader("Upload one or more Amazon Order PDFs", type="pdf", accept_multiple_files=True)
+
+if uploaded_files:
+    towels_df, blankets_df = extract_orders_from_pdfs(uploaded_files)
+
+    if not towels_df.empty:
+        st.subheader("🧺 Towel Orders")
+        st.dataframe(towels_df, use_container_width=True)
+
+    if not blankets_df.empty:
+        st.subheader("🍼 Blanket Orders")
+        st.dataframe(blankets_df, use_container_width=True)
+
+    # Excel download
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        if not towels_df.empty:
+            towels_df.to_excel(writer, sheet_name='Towels', index=False)
+        if not blankets_df.empty:
+            blankets_df.to_excel(writer, sheet_name='Blankets', index=False)
+    excel_buffer.seek(0)
+
+    st.download_button("📥 Download Excel (2 Sheets)", data=excel_buffer, file_name="Amazon_Orders.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # Label PDF
+    if st.button("📄 Generate 4x6 Order Labels PDF"):
+        label_pdf = create_4x6_labels_pdf(towels_df, blankets_df)
+        st.download_button("📥 Download Printable Labels PDF", data=label_pdf, file_name="Amazon_Labels_4x6.pdf", mime="application/pdf")
+
+    if st.button("🔄 Clear All"):
+        st.experimental_rerun()
