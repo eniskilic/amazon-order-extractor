@@ -24,16 +24,12 @@ def extract_orders_from_pdfs(pdf_files):
         for raw in raw_orders:
             base = {}
 
-            # Smart Buyer Name Extraction
             buyer_match = re.search(r"Buyer Name:\s*(.+)", raw)
-if buyer_match:
-buyer_match = re.search(r"Buyer Name:\s*(.+)", raw)
-if buyer_match:
-    base['Buyer Name'] = buyer_match.group(1).strip()
-else:
-    addr_lines = raw.strip().splitlines()
-    base['Buyer Name'] = addr_lines[0].strip() if addr_lines else "Unknown"
-
+            if buyer_match:
+                base['Buyer Name'] = buyer_match.group(1).strip()
+            else:
+                addr_lines = raw.strip().splitlines()
+                base['Buyer Name'] = addr_lines[0].strip() if addr_lines else "Unknown"
 
             addr_match = re.search(r"([\w\s\.'\-]+)\n(.+?)\n(.+?\d{5}.*?)\n", raw)
             if addr_match:
@@ -65,7 +61,6 @@ else:
             gift_note_match = re.search(r"Gift (Message|Note):\s*(.+?)(?:\n|$)", raw, re.IGNORECASE)
             gift_note = gift_note_match.group(2).strip() if gift_note_match else ""
 
-            # Towel
             if re.search(r"towel|washcloth|hand towel|bath towel", raw, re.IGNORECASE):
                 towel = base.copy()
 
@@ -93,7 +88,6 @@ else:
                 towel['Gift Note'] = gift_note
                 towel_orders.append(towel)
 
-            # Blanket
             elif re.search(r"blanket|swaddle|beanie|knit hat", raw, re.IGNORECASE):
                 blanket = base.copy()
 
@@ -141,7 +135,6 @@ if uploaded_files:
         st.subheader("🍼 Blanket Orders")
         st.dataframe(blankets_df, use_container_width=True)
 
-    # Group by Buyer Name
     all_orders_df = pd.concat([towels_df, blankets_df])
     grouped = all_orders_df.groupby('Buyer Name')
     st.subheader("👤 Grouped Orders by Buyer")
@@ -149,7 +142,6 @@ if uploaded_files:
         st.markdown(f"### 🧾 {buyer}")
         st.dataframe(group.reset_index(drop=True), use_container_width=True)
 
-    # Excel download
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         if not towels_df.empty:
