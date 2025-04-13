@@ -58,7 +58,7 @@ if uploaded_file:
     img_buffer = BytesIO()
     fullpage_img.save(img_buffer, format='PNG')
     img_buffer.seek(0)
-    c.drawImage(ImageReader(your_bytesio_object), 0, 0, width=LABEL_SIZE[0], height=LABEL_SIZE[1])
+    c.drawImage(ImageReader(img_io), 0, 0, width=LABEL_SIZE[0], height=LABEL_SIZE[1])
     c.showPage()
 
     c.save()
