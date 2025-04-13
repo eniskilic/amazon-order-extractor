@@ -7,8 +7,7 @@ from reportlab.lib.pagesizes import landscape
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 
-# Define 4x6 portrait label size manually
-LABEL_SIZE = (4 * inch, 6 * inch)  # width x height
+#canvas.Canvas(buffer, pagesize=LABEL_SIZE)
 
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
