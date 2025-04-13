@@ -50,9 +50,8 @@ if uploaded_file:
 
         # Draw on canvas
         from reportlab.lib.utils import ImageReader
-c.drawImage(ImageReader(your_bytesio_object), 0, 0, width=LABEL_SIZE[0], height=LABEL_SIZE[1])
-
-        c.showPage()
+    c.drawImage(ImageReader(your_bytesio_object), 0, 0, width=LABEL_SIZE[0], height=LABEL_SIZE[1])
+    c.showPage()
 
     # Final full page as reference
     fullpage_img = images[0].resize((int(4 * inch), int(6 * inch)))
