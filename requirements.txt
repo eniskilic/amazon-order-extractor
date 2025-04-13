@@ -1,6 +1,6 @@
-streamlit
-PyPDF2
-fpdf2
-pandas
-xlsxwriter
+pdf2image
+Pillow
 reportlab
+pdfplumber
+streamlit
+openpyxl
