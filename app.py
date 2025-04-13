@@ -3,7 +3,13 @@ import pdfplumber
 import pandas as pd
 import re
 from io import BytesIO
-from reportlab.lib.pagesizes import portrait
+from reportlab.lib.pagesizes import landscape
+from reportlab.lib.units import inch
+from reportlab.pdfgen import canvas
+
+# Define 4x6 portrait label size manually
+LABEL_SIZE = (4 * inch, 6 * inch)  # width x height
+
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 
