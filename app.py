@@ -4,154 +4,141 @@ import pandas as pd
 import re
 from io import BytesIO
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A6
+from reportlab.lib.pagesizes import landscape
 from reportlab.lib.units import inch
 
-PAGE_WIDTH, PAGE_HEIGHT = A6  # 4.1 x 5.8 in approx
+LABEL_WIDTH = 4 * inch
+LABEL_HEIGHT = 6 * inch
+LABEL_SIZE = (LABEL_WIDTH, LABEL_HEIGHT)
 
-# ============ CLEAN FIELD UTILS ============
-
-def clean_thread_color(raw):
-    return re.sub(r'\s*\(#\w+\)', '', raw).strip()
-
-def clean_product_title(raw):
-    # Remove "Unit price" lines or anything after "Item total"
-    raw = re.sub(r'Unit price.*', '', raw)
-    raw = re.sub(r'Item total.*', '', raw)
-    return raw.strip()
-
-def clean_address(raw):
-    return re.sub(r'Buyer Name:.*', '', raw).strip()
-
-# ============ PDF ORDER EXTRACTION ============
-
+# ======================= PDF EXTRACTION =======================
 def extract_orders_from_pdfs(pdf_files):
-    towel_orders, blanket_orders = [], []
+    combined_orders = {}
+    towel_rows, blanket_rows = [], []
 
-    for pdf_file in pdf_files:
-        with pdfplumber.open(pdf_file) as pdf:
+    for file in pdf_files:
+        with pdfplumber.open(file) as pdf:
             text = '\n'.join(page.extract_text() for page in pdf.pages)
 
-        raw_orders = text.split("Shipping Address:")[1:]
-
-        for raw in raw_orders:
+        chunks = text.split("Shipping Address:")[1:]
+        for chunk in chunks:
             base = {}
-            addr_match = re.search(r"([\w\s\.'\-]+)\n(.+?)\n(.+?\d{5}.*?)\n", raw)
+            addr_match = re.search(r"([\w\s\.'\-]+)\n(.+?)\n(.+?\d{5}.*?)\n", chunk)
             if addr_match:
                 base['Buyer Name'] = addr_match.group(1).strip()
-                base['Address'] = clean_address(f"{addr_match.group(2).strip()}, {addr_match.group(3).strip()}")
+                base['Address'] = f"{addr_match.group(2).strip()}, {addr_match.group(3).strip()}"
 
-            base['Order ID'] = re.search(r"Order ID:\s*([\d\-]+)", raw).group(1) if re.search(r"Order ID:\s*([\d\-]+)", raw) else ""
-            base['Order Item ID'] = re.search(r"Order Item ID:\s*(\d+)", raw).group(1) if re.search(r"Order Item ID:\s*(\d+)", raw) else ""
-            base['SKU'] = re.search(r"SKU:\s*(.+?)\n", raw).group(1).strip() if re.search(r"SKU:\s*(.+?)\n", raw) else ""
-            base['FNSKU'] = re.search(r"FNSKU:\s*([A-Z0-9]+)", raw).group(1).strip() if re.search(r"FNSKU:\s*([A-Z0-9]+)", raw) else ""
+            base['Order ID'] = re.search(r"Order ID:\s*([\d\-]+)", chunk).group(1) if re.search(r"Order ID:\s*([\d\-]+)", chunk) else ""
+            base['SKU'] = re.search(r"SKU:\s*(.+?)\n", chunk).group(1).strip() if re.search(r"SKU:\s*(.+?)\n", chunk) else ""
+            base['FNSKU'] = re.search(r"FNSKU:\s*([A-Z0-9]+)", chunk).group(1).strip() if re.search(r"FNSKU:\s*([A-Z0-9]+)", chunk) else ""
+            title_match = re.search(r"Product Details\s*(.*?)\s*SKU:", chunk, re.DOTALL)
+            base['Product Title'] = re.sub(r"Unit price.*", "", title_match.group(1).replace('\n', ' ')).strip() if title_match else ""
+            base['Qty'] = re.search(r"Quantity\s*(\d+)", chunk).group(1) if re.search(r"Quantity\s*(\d+)", chunk) else "1"
+            gift_note_match = re.search(r"Gift (Message|Note):\s*(.+?)(?:\n|$)", chunk, re.IGNORECASE)
+            base['Gift Note'] = gift_note_match.group(2).strip() if gift_note_match else ""
 
-            title_match = re.search(r"Product Details\s*(.*?)\s*SKU:", raw, re.DOTALL)
-            base['Product Title'] = clean_product_title(title_match.group(1).replace('\n', ' ')) if title_match else ""
+            order_id = base['Order ID']
+            if order_id not in combined_orders:
+                combined_orders[order_id] = base.copy()
+                combined_orders[order_id]['Towel'] = {}
+                combined_orders[order_id]['Blanket'] = {}
 
-            base['Qty'] = re.search(r"Quantity\s*(\d+)", raw).group(1) if re.search(r"Quantity\s*(\d+)", raw) else "1"
+            if "towel" in chunk.lower():
+                combined_orders[order_id]['Towel'].update({
+                    'Set Type': "3pc" if "3Pcs" in chunk else "",
+                    'Font': re.search(r"Choose Your Font:\s*([^\n]+)", chunk).group(1).strip() if re.search(r"Choose Your Font:\s*([^\n]+)", chunk) else "",
+                    'Font Color': re.search(r"Font Color:\s*([^\(#\n]+)", chunk).group(1).strip() if re.search(r"Font Color:\s*([^\(#\n]+)", chunk) else "",
+                    'Washcloth': re.search(r"Washcloth:\s*(.+)", chunk).group(1).strip() if re.search(r"Washcloth:\s*(.+)", chunk) else "",
+                    'Hand Towel': re.search(r"Hand Towel:\s*(.+)", chunk).group(1).strip() if re.search(r"Hand Towel:\s*(.+)", chunk) else "",
+                    'Bath Towel': re.search(r"Bath Towel:\s*(.+)", chunk).group(1).strip() if re.search(r"Bath Towel:\s*(.+)", chunk) else "",
+                })
+                towel_rows.append(combined_orders[order_id])
 
-            gift_note_match = re.search(r"Gift (Message|Note):\s*(.+?)(?:\n|$)", raw, re.IGNORECASE)
-            gift_note = gift_note_match.group(2).strip() if gift_note_match else ""
+            elif "blanket" in chunk.lower():
+                combined_orders[order_id]['Blanket'].update({
+                    'Blanket Color': re.search(r"Blanket Color:\s*([^\n]+)", chunk).group(1).strip() if re.search(r"Blanket Color:\s*([^\n]+)", chunk) else "",
+                    'Font': re.search(r"Font:\s*([^\n]+)", chunk).group(1).strip() if re.search(r"Font:\s*([^\n]+)", chunk) else "",
+                    'Thread Color': re.sub(r"\s*\(#\w+\)", "", re.search(r"Thread Color:\s*([^\n]+)", chunk).group(1).strip()) if re.search(r"Thread Color:\s*([^\n]+)", chunk) else "",
+                    'Name': re.search(r"Blanket Text:\s*([^\n]+)", chunk).group(1).strip() if re.search(r"Blanket Text:\s*([^\n]+)", chunk) else "",
+                    'Gift Box': "Yes" if base['Gift Note'] else (re.search(r"Gift Box:\s*(Yes|No)", chunk).group(1).strip() if re.search(r"Gift Box:\s*(Yes|No)", chunk) else "No"),
+                    'Knit Hat': re.search(r"Knit Hat:\s*(Yes|No)", chunk).group(1).strip() if re.search(r"Knit Hat:\s*(Yes|No)", chunk) else "No"
+                })
+                blanket_rows.append(combined_orders[order_id])
 
-            if "towel" in raw.lower():
-                towel = base.copy()
-                towel['Set Type'] = "3pc" if "3Pcs" in raw else ""
-                towel['Font'] = re.search(r"Choose Your Font:\s*([^\n]+)", raw).group(1).strip() if re.search(r"Choose Your Font:\s*([^\n]+)", raw) else ""
-                towel['Font Color'] = re.search(r"Font Color:\s*([^\n]+)", raw).group(1).strip() if re.search(r"Font Color:\s*([^\n]+)", raw) else ""
-                for t in ['Washcloth', 'Hand Towel', 'Bath Towel']:
-                    match = re.search(rf"{t}:\s*(.+)", raw)
-                    towel[f'{t} Text'] = match.group(1).strip() if match else ""
-                towel['Gift Note'] = gift_note
-                towel_orders.append(towel)
+    return pd.DataFrame(towel_rows), pd.DataFrame(blanket_rows), combined_orders
 
-            elif "blanket" in raw.lower():
-                blanket = base.copy()
-                blanket['Blanket Color'] = re.search(r"Blanket Color:\s*([^\n]+)", raw).group(1).strip() if re.search(r"Blanket Color:\s*([^\n]+)", raw) else ""
-                blanket['Font'] = re.search(r"Font:\s*([^\n]+)", raw).group(1).strip() if re.search(r"Font:\s*([^\n]+)", raw) else ""
-                thread_raw = re.search(r"Thread Color:\s*([^\n]+)", raw)
-                blanket['Thread Color'] = clean_thread_color(thread_raw.group(1)) if thread_raw else ""
-                blanket['Name'] = re.search(r"Blanket Text:\s*([^\n]+)", raw).group(1).strip() if re.search(r"Blanket Text:\s*([^\n]+)", raw) else ""
-                blanket['Knit Hat?'] = re.search(r"Knit Hat:\s*(Yes|No)", raw, re.IGNORECASE).group(1).strip() if re.search(r"Knit Hat:\s*(Yes|No)", raw, re.IGNORECASE) else "No"
-                giftbox_match = re.search(r"Gift Box:\s*(Yes|No)", raw, re.IGNORECASE)
-                blanket['Gift Box?'] = "Yes" if gift_note else (giftbox_match.group(1).strip() if giftbox_match else "No")
-                blanket['Gift Note'] = gift_note
-                blanket_orders.append(blanket)
-
-    return pd.DataFrame(towel_orders), pd.DataFrame(blanket_orders)
-
-# ============ LABEL BUILDER ============
-
-def create_labels_pdf(towel_df, blanket_df):
+# ======================= LABEL GENERATOR =======================
+def create_4x6_labels(combined_orders):
     buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=(PAGE_WIDTH, PAGE_HEIGHT))
+    c = canvas.Canvas(buffer, pagesize=LABEL_SIZE)
 
-    def write(label, value, bold=True, size=8, gap=12):
-        nonlocal y
-        if not value: return
-        c.setFont("Helvetica-Bold" if bold else "Helvetica", size)
-        c.drawString(25, y, f"{label}:" if bold else value)
-        if not bold:
-            c.drawString(90, y, value)
-        y -= gap
+    for order_id, order in combined_orders.items():
+        y = LABEL_HEIGHT - 30
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(20, y, f"🧵 ORDER ID: {order_id}")
+        y -= 15
 
-    def wrap(label, text, max_chars=65):
-        nonlocal y
-        if not text: return
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(25, y, f"{label}:")
-        y -= 10
-        c.setFont("Helvetica", 8)
-        for line in [text[i:i+max_chars] for i in range(0, len(text), max_chars)]:
-            c.drawString(30, y, line.strip())
+        def draw(label, value):
+            nonlocal y
+            if value:
+                c.setFont("Helvetica-Bold", 8)
+                c.drawString(20, y, f"{label}:")
+                c.setFont("Helvetica", 8)
+                c.drawString(90, y, str(value))
+                y -= 10
+
+        draw("Buyer", order.get("Buyer Name"))
+        draw("Address", order.get("Address"))
+        draw("Product", order.get("Product Title"))
+        draw("FNSKU", order.get("FNSKU"))
+        draw("SKU", order.get("SKU"))
+        draw("Qty", order.get("Qty"))
+
+        if order.get("Towel"):
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(20, y, "--- TOWEL DETAILS ---")
             y -= 10
-        y -= 4
+            for k, v in order["Towel"].items():
+                draw(k, v)
 
-    for df, label in [(towel_df, "🧺 TOWEL ORDER"), (blanket_df, "🍼 BLANKET ORDER")]:
-        for row in df.to_dict(orient='records'):
-            y = PAGE_HEIGHT - 30
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(25, y, label)
-            y -= 18
-            write("Buyer", row.get("Buyer Name", ""))
-            write("Address", row.get("Address", ""))
-            write("Order ID", row.get("Order ID", ""))
-            wrap("Product", row.get("Product Title", ""))
-            write("FNSKU", row.get("FNSKU", ""), bold=False)
-            write("SKU", row.get("SKU", ""), bold=False)
-            write("Qty", row.get("Qty", ""))
-            write("Set Type", row.get("Set Type", ""))
+        if order.get("Blanket"):
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(20, y, "--- BLANKET DETAILS ---")
+            y -= 10
+            for k, v in order["Blanket"].items():
+                draw(k, v)
 
-            if label == "🧺 TOWEL ORDER":
-                write("Font", row.get("Font", ""))
-                write("Font Color", row.get("Font Color", ""))
-                write("Washcloth", row.get("Washcloth Text", ""))
-                write("Hand Towel", row.get("Hand Towel Text", ""))
-                write("Bath Towel", row.get("Bath Towel Text", ""))
-            else:
-                write("Blanket Color", row.get("Blanket Color", ""))
-                write("Font", row.get("Font", ""))
-                write("Thread Color", row.get("Thread Color", ""))
-                write("Name", row.get("Name", ""))
-                write("Knit Hat", row.get("Knit Hat?"))
-                write("Gift Box", row.get("Gift Box?"))
+        if order.get("Gift Note"):
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(20, y, "Gift Note:")
+            y -= 10
+            c.setFont("Helvetica", 8)
+            wrapped = [order["Gift Note"][i:i+60] for i in range(0, len(order["Gift Note"]), 60)]
+            for line in wrapped:
+                c.drawString(25, y, line)
+                y -= 10
 
-            wrap("Gift Note", row.get("Gift Note", ""))
-            c.showPage()
+        c.showPage()
 
     c.save()
     buffer.seek(0)
     return buffer
 
-# ============ STREAMLIT UI ============
+# ======================= STREAMLIT UI =======================
+st.set_page_config(page_title="Amazon Orders", layout="wide")
+st.title("📦 Amazon Orders Viewer + Printable Labels")
 
-st.set_page_config(page_title="Amazon Order Labels", layout="wide")
-st.title("📦 Amazon Order Extractor + Printable Labels")
-
-uploaded_files = st.file_uploader("Upload Amazon Order PDFs", type="pdf", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload one or more Amazon Order PDFs", type="pdf", accept_multiple_files=True)
 
 if uploaded_files:
-    towels_df, blankets_df = extract_orders_from_pdfs(uploaded_files)
+    towels_df, blankets_df, combined_orders = extract_orders_from_pdfs(uploaded_files)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button("📥 Download Excel (Towels & Blankets)", data=pd.ExcelWriter(BytesIO(), engine='openpyxl'), key='excel_btn', help="Coming soon")
+    with col2:
+        label_pdf = create_4x6_labels(combined_orders)
+        st.download_button("📄 Download Printable 4x6 Labels", data=label_pdf, file_name="Amazon_Labels.pdf", mime="application/pdf")
 
     if not towels_df.empty:
         st.subheader("🧺 Towel Orders")
@@ -160,21 +147,6 @@ if uploaded_files:
     if not blankets_df.empty:
         st.subheader("🍼 Blanket Orders")
         st.dataframe(blankets_df, use_container_width=True)
-
-    # Excel download
-    excel_io = BytesIO()
-    with pd.ExcelWriter(excel_io, engine="openpyxl") as writer:
-        if not towels_df.empty:
-            towels_df.to_excel(writer, index=False, sheet_name="Towels")
-        if not blankets_df.empty:
-            blankets_df.to_excel(writer, index=False, sheet_name="Blankets")
-    excel_io.seek(0)
-
-    st.download_button("📥 Download Excel (2 Sheets)", data=excel_io, file_name="Amazon_Orders.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    if st.button("📄 Generate Labels PDF"):
-        label_pdf = create_labels_pdf(towels_df, blankets_df)
-        st.download_button("📥 Download PDF Labels", data=label_pdf, file_name="Amazon_Labels.pdf", mime="application/pdf")
 
     if st.button("🔄 Reset"):
         st.experimental_rerun()
