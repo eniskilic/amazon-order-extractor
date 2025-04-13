@@ -23,10 +23,20 @@ def extract_orders_from_pdfs(pdf_files):
 
         for raw in raw_orders:
             base = {}
+
+            # Extract buyer name using more reliable pattern
+            buyer_match = re.search(r"Buyer Name:\s*(.+)", raw)
+            if buyer_match:
+                base['Buyer Name'] = buyer_match.group(1).strip()
+            else:
+                addr_match = re.search(r"([\w\s\.'\-]+)\n(.+?)\n(.+?\d{5}.*?)\n", raw)
+                base['Buyer Name'] = addr_match.group(1).strip() if addr_match else "Unknown"
+
             addr_match = re.search(r"([\w\s\.'\-]+)\n(.+?)\n(.+?\d{5}.*?)\n", raw)
             if addr_match:
-                base['Buyer Name'] = addr_match.group(1).strip()
                 base['Address'] = f"{addr_match.group(2).strip()}, {addr_match.group(3).strip()}"
+            else:
+                base['Address'] = ""
 
             date_match = re.search(r"Order Date:\s*(\w{3},\s\w{3}\s\d{1,2},\s\d{4})", raw)
             base['Order Date'] = date_match.group(1) if date_match else ""
