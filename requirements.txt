@@ -3,3 +3,4 @@ PyPDF2
 fpdf2
 pandas
 xlsxwriter
+reportlab
