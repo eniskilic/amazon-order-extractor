@@ -48,7 +48,9 @@ if uploaded_file:
         img_io.seek(0)
 
         # Draw on canvas
-        c.drawImage(Image.open(img_io), 0, 0, width=LABEL_SIZE[0], height=LABEL_SIZE[1])
+        from reportlab.lib.utils import ImageReader
+c.drawImage(ImageReader(img_io), 0, 0, width=LABEL_SIZE[0], height=LABEL_SIZE[1])
+
         c.showPage()
 
     # Final full page as reference
