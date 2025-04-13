@@ -44,7 +44,6 @@ def extract_orders_from_pdf(pdf_file):
         # Gift Note detection
         gift_note_match = re.search(r"Gift (Message|Note):\s*(.+?)(?:\n|$)", raw, re.IGNORECASE)
         gift_note = gift_note_match.group(2).strip() if gift_note_match else ""
-        base["Gift Note"] = gift_note
 
         # Classify as Towel or Blanket
         if re.search(r"towel|washcloth|hand towel|bath towel", raw, re.IGNORECASE):
@@ -74,6 +73,8 @@ def extract_orders_from_pdf(pdf_file):
                 match = re.search(rf"{t}:\s*(.+)", raw)
                 towel[f'{t} Text'] = match.group(1).strip() if match else ""
 
+            # Gift Note for towel (optional)
+            towel['Gift Note'] = gift_note
             towel_orders.append(towel)
 
         elif re.search(r"blanket|swaddle|beanie|knit hat", raw, re.IGNORECASE):
@@ -100,15 +101,17 @@ def extract_orders_from_pdf(pdf_file):
 
             # Gift Box — override to Yes if gift note exists
             giftbox_match = re.search(r"Gift Box:\s*(Yes|No)", raw, re.IGNORECASE)
-            if gift_note:
-                blanket['Gift Box?'] = "Yes"
-            else:
-                blanket['Gift Box?'] = giftbox_match.group(1).strip().capitalize() if giftbox_match else "No"
+            gift_box_value = "Yes" if gift_note else (
+                giftbox_match.group(1).strip().capitalize() if giftbox_match else "No"
+            )
+
+            # Insert in preferred order
+            blanket['Gift Box?'] = gift_box_value
+            blanket['Gift Note'] = gift_note
 
             blanket_orders.append(blanket)
 
     return pd.DataFrame(towel_orders), pd.DataFrame(blanket_orders)
-
 
 # --- Streamlit App ---
 st.set_page_config(page_title="Amazon Orders Split", layout="wide")
