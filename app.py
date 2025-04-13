@@ -50,7 +50,7 @@ if uploaded_file:
 
         # Draw on canvas
         from reportlab.lib.utils import ImageReader
-    c.drawImage(ImageReader(your_bytesio_object), 0, 0, width=LABEL_SIZE[0], height=LABEL_SIZE[1])
+    c.drawImage(ImageReader(img_io), 0, 0, width=LABEL_SIZE[0], height=LABEL_SIZE[1])
     c.showPage()
 
     # Final full page as reference
