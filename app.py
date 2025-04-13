@@ -41,9 +41,15 @@ def extract_orders_from_pdf(pdf_file):
         qty_match = re.search(r"Quantity\s*(\d+)", raw)
         base['Qty'] = qty_match.group(1) if qty_match else "1"
 
+        # Gift Note detection
+        gift_note_match = re.search(r"Gift (Message|Note):\s*(.+?)(?:\n|$)", raw, re.IGNORECASE)
+        gift_note = gift_note_match.group(2).strip() if gift_note_match else ""
+        base["Gift Note"] = gift_note
+
         # Classify as Towel or Blanket
         if re.search(r"towel|washcloth|hand towel|bath towel", raw, re.IGNORECASE):
             towel = base.copy()
+
             # Set Type
             if "2Pcs" in raw:
                 towel['Set Type'] = "2pc"
@@ -92,9 +98,12 @@ def extract_orders_from_pdf(pdf_file):
             hat_match = re.search(r"Knit Hat:\s*(Yes|No)", raw, re.IGNORECASE)
             blanket['Knit Hat?'] = hat_match.group(1).strip().capitalize() if hat_match else "No"
 
-            # Gift Box
-            gift_match = re.search(r"Gift Box:\s*(Yes|No)", raw, re.IGNORECASE)
-            blanket['Gift Box?'] = gift_match.group(1).strip().capitalize() if gift_match else "No"
+            # Gift Box — override to Yes if gift note exists
+            giftbox_match = re.search(r"Gift Box:\s*(Yes|No)", raw, re.IGNORECASE)
+            if gift_note:
+                blanket['Gift Box?'] = "Yes"
+            else:
+                blanket['Gift Box?'] = giftbox_match.group(1).strip().capitalize() if giftbox_match else "No"
 
             blanket_orders.append(blanket)
 
@@ -118,7 +127,7 @@ if uploaded_file:
         st.subheader("🍼 Blanket Orders")
         st.dataframe(blankets_df, use_container_width=True)
 
-    # Download both as Excel with 2 sheets
+    # Download Excel with two sheets
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         if not towels_df.empty:
