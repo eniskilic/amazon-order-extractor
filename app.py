@@ -27,6 +27,8 @@ def extract_orders_from_pdfs(pdf_files):
             # Smart Buyer Name Extraction
             buyer_match = re.search(r"Buyer Name:\s*(.+)", raw)
 if buyer_match:
+buyer_match = re.search(r"Buyer Name:\s*(.+)", raw)
+if buyer_match:
     base['Buyer Name'] = buyer_match.group(1).strip()
 else:
     addr_lines = raw.strip().splitlines()
