@@ -3,18 +3,12 @@ import pdfplumber
 import pandas as pd
 import re
 from io import BytesIO
-from reportlab.lib.pagesizes import landscape
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 
-#canvas.Canvas(buffer, pagesize=LABEL_SIZE)
-
-from reportlab.lib.units import inch
-from reportlab.pdfgen import canvas
-
-# Constants
 LABEL_SIZE = (4 * inch, 6 * inch)  # 4x6 inches portrait
 
+# ==================== DATA EXTRACTION ====================
 def extract_orders_from_pdfs(pdf_files):
     towel_orders = []
     blanket_orders = []
@@ -108,9 +102,11 @@ def extract_orders_from_pdfs(pdf_files):
                 blanket_orders.append(blanket)
 
     return pd.DataFrame(towel_orders), pd.DataFrame(blanket_orders)
+
+# ==================== LABEL GENERATOR ====================
 def create_4x6_labels_pdf(towel_df, blanket_df):
     buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=portrait(LABEL_SIZE))
+    c = canvas.Canvas(buffer, pagesize=LABEL_SIZE)
     c.setTitle("Amazon Order Labels")
 
     def draw_text(label, value, size=12, bold=False, gap=15):
@@ -119,7 +115,6 @@ def create_4x6_labels_pdf(towel_df, blanket_df):
             c.drawString(40, draw_text.y, f"{label}: {value}")
             draw_text.y -= gap
 
-    # Draw towel labels
     for row in towel_df.to_dict(orient='records'):
         draw_text.y = 560
         c.setFont("Helvetica-Bold", 18)
@@ -145,7 +140,6 @@ def create_4x6_labels_pdf(towel_df, blanket_df):
 
         c.showPage()
 
-    # Draw blanket labels
     for row in blanket_df.to_dict(orient='records'):
         draw_text.y = 560
         c.setFont("Helvetica-Bold", 18)
@@ -173,12 +167,39 @@ def create_4x6_labels_pdf(towel_df, blanket_df):
     c.save()
     buffer.seek(0)
     return buffer
-    st.markdown("---")
+
+# ==================== STREAMLIT APP ====================
+st.set_page_config(page_title="Amazon Orders Split", layout="wide")
+st.title("📦 Amazon Custom Orders — Towels & Blankets")
+
+uploaded_files = st.file_uploader("Upload one or more Amazon Order PDFs", type="pdf", accept_multiple_files=True)
+
+if uploaded_files:
+    towels_df, blankets_df = extract_orders_from_pdfs(uploaded_files)
+
+    if not towels_df.empty:
+        st.subheader("🧺 Towel Orders")
+        st.dataframe(towels_df, use_container_width=True)
+
+    if not blankets_df.empty:
+        st.subheader("🍼 Blanket Orders")
+        st.dataframe(blankets_df, use_container_width=True)
+
+    # Excel Export
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        if not towels_df.empty:
+            towels_df.to_excel(writer, sheet_name='Towels', index=False)
+        if not blankets_df.empty:
+            blankets_df.to_excel(writer, sheet_name='Blankets', index=False)
+    excel_buffer.seek(0)
+
+    st.download_button("📥 Download Excel (2 Sheets)", excel_buffer, file_name="Amazon_Orders.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # Label PDF
     if st.button("📄 Generate 4x6 Order Labels PDF"):
         label_pdf = create_4x6_labels_pdf(towels_df, blankets_df)
-        st.download_button(
-            label="📥 Download Printable Labels PDF",
-            data=label_pdf,
-            file_name="Amazon_4x6_Order_Labels.pdf",
-            mime="application/pdf"
-        )
+        st.download_button("📥 Download Printable 4x6 Labels", data=label_pdf, file_name="Amazon_Order_Labels_4x6.pdf", mime="application/pdf")
+
+    if st.button("🔄 Clear All"):
+        st.experimental_rerun()
