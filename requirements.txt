@@ -1,6 +1,6 @@
+streamlit
+pdfplumber
 pdf2image
 Pillow
 reportlab
-pdfplumber
-streamlit
 openpyxl
